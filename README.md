@@ -192,7 +192,7 @@ master1   Ready    master   18m   v1.18.3
 ```
 
 
-### 4. Join (worker)
+### 4. Join the cluster (worker)
 
 Add worker to the cluster.
 
@@ -279,7 +279,49 @@ Request Body:
 ```
 
 
-### 6. Destroy the cluster (master)
+### 6. Reconfigure the cluster (master)
+
+Here set up OpenID Connect authentication.
+
+```yaml
+# cluster.yaml
+apiVersion: kubeadm.k8s.io/v1beta2
+kind: ClusterConfiguration
+apiServer:
+  extraArgs:
+    oidc-issuer-url: https://accounts.google.com
+    oidc-client-id: REDUCTED.apps.googleusercontent.com
+```
+
+```sh
+sudo kubeadm upgrade apply --config=cluster.yaml
+```
+
+Make sure you can access the cluster using kubelogin.
+
+```yaml
+# .kube/config
+- name: oidc
+  user:
+    exec:
+      apiVersion: client.authentication.k8s.io/v1beta1
+      command: kubectl
+      args:
+      - oidc-login
+      - get-token
+      - --grant-type=authcode-keyboard
+      - --oidc-issuer-url=https://accounts.google.com
+      - --oidc-client-id=REDUCTED.apps.googleusercontent.com
+      - --oidc-client-secret=REDUCTED
+```
+
+```console
+$ kubectl --user=oidc get nodes
+Error from server (Forbidden): nodes is forbidden: User "https://accounts.google.com#REDUCTED" cannot list resource "nodes" in API group "" at the cluster scope
+```
+
+
+### 7. Destroy the cluster (master)
 
 Remove worker.
 
