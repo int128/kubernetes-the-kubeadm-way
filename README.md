@@ -23,9 +23,20 @@ with the following options:
 - your nearest region and zone
 - e2-standard-2 (2 vCPUs, 8 GB memory)
 - default network
-- Ubuntu 18.04
+- Debian 10
 
-Make sure you can connect the instances.
+As well as you can create instances on CLI.
+
+```sh
+gcloud beta compute instances create master1 --zone=asia-northeast1-b \
+  --machine-type=e2-standard-2 \
+  --subnet=default \
+  --no-service-account --no-scopes \
+  --image=debian-10-buster-v20200413 --image-project=debian-cloud \
+  --boot-disk-size=10GB --boot-disk-type=pd-standard
+```
+
+You can log in to the instances on the console.
 
 
 ### 2. Install the tools (master and worker)
@@ -33,6 +44,7 @@ Make sure you can connect the instances.
 Install Docker.
 
 ```sh
+sudo apt update
 sudo apt install -y docker.io
 
 sudo tee /etc/docker/daemon.json <<EOF
@@ -50,42 +62,34 @@ sudo mkdir -p /etc/systemd/system/docker.service.d
 sudo systemctl daemon-reload
 sudo systemctl restart docker
 sudo systemctl enable docker
+sudo docker version
 ```
 
 ```console
-$ sudo docker version
 Client:
- Version:           19.03.6
- API version:       1.40
- Go version:        go1.12.17
- Git commit:        369ce74a3c
- Built:             Fri Feb 28 23:45:43 2020
+ Version:           18.09.1
+ API version:       1.39
+ Go version:        go1.11.6
+ Git commit:        4c52b90
+ Built:             Tue, 03 Sep 2019 19:59:35 +0200
  OS/Arch:           linux/amd64
  Experimental:      false
+
 Server:
  Engine:
-  Version:          19.03.6
-  API version:      1.40 (minimum version 1.12)
-  Go version:       go1.12.17
-  Git commit:       369ce74a3c
-  Built:            Wed Feb 19 01:06:16 2020
+  Version:          18.09.1
+  API version:      1.39 (minimum version 1.12)
+  Go version:       go1.11.6
+  Git commit:       4c52b90
+  Built:            Tue Sep  3 17:59:35 2019
   OS/Arch:          linux/amd64
   Experimental:     false
- containerd:
-  Version:          1.3.3-0ubuntu1~18.04.2
-  GitCommit:        
- runc:
-  Version:          spec: 1.0.1-dev
-  GitCommit:        
- docker-init:
-  Version:          0.18.0
-  GitCommit:        
 ```
 
 Install kubeadm, kubelet and kubectl.
 
 ```sh
-sudo apt-get update && sudo apt-get install -y apt-transport-https curl
+sudo apt install -y apt-transport-https curl
 curl -s https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo apt-key add -
 cat <<EOF | sudo tee /etc/apt/sources.list.d/kubernetes.list
 deb https://apt.kubernetes.io/ kubernetes-xenial main
@@ -97,9 +101,10 @@ sudo apt-mark hold kubelet kubeadm kubectl
 
 ```console
 $ kubectl version --client
-Client Version: version.Info{Major:"1", Minor:"18", GitVersion:"v1.18.2", GitCommit:"52c56ce7a8272c798dbc29846288d7cd9fbae032", GitTreeState:"clean", BuildDate:"2020-04-16T11:56:40Z", GoVersion:"go1.13.9", Compiler:"gc", Platform:"linux/amd64"}
+Client Version: version.Info{Major:"1", Minor:"18", GitVersion:"v1.18.3", GitCommit:"2e7996e3e2712684bc73f0dec0200d64eec7fe40", GitTreeState:"clean", BuildDate:"2020-05-20T12:52:00Z", GoVersion:"go1.13.9", Compiler:"gc", Platform:"linux/amd64"}
+
 $ kubeadm version
-kubeadm version: &version.Info{Major:"1", Minor:"18", GitVersion:"v1.18.2", GitCommit:"52c56ce7a8272c798dbc29846288d7cd9fbae032", GitTreeState:"clean", BuildDate:"2020-04-16T11:54:15Z", GoVersion:"go1.13.9", Compiler:"gc", Platform:"linux/amd64"}
+kubeadm version: &version.Info{Major:"1", Minor:"18", GitVersion:"v1.18.3", GitCommit:"2e7996e3e2712684bc73f0dec0200d64eec7fe40", GitTreeState:"clean", BuildDate:"2020-05-20T12:49:29Z", GoVersion:"go1.13.9", Compiler:"gc", Platform:"linux/amd64"}
 ```
 
 ### 3. Create a cluster (master)
@@ -112,12 +117,12 @@ sudo kubeadm init
 mkdir -p $HOME/.kube
 sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
 sudo chown $(id -u):$(id -g) $HOME/.kube/config
+kubectl get nodes
 ```
 
 ```console
-$ kubectl get nodes
-NAME      STATUS     ROLES    AGE     VERSION
-master1   NotReady   master   6m12s   v1.18.2
+NAME      STATUS     ROLES    AGE   VERSION
+master1   NotReady   master   60s   v1.18.3
 ```
 
 You can see the cluster config.
@@ -145,7 +150,7 @@ data:
         dataDir: /var/lib/etcd
     imageRepository: k8s.gcr.io
     kind: ClusterConfiguration
-    kubernetesVersion: v1.18.2
+    kubernetesVersion: v1.18.3
     networking:
       dnsDomain: cluster.local
       serviceSubnet: 10.96.0.0/12
@@ -153,7 +158,7 @@ data:
   ClusterStatus: |
     apiEndpoints:
       master1:
-        advertiseAddress: 10.146.0.2
+        advertiseAddress: 10.146.0.4
         bindPort: 6443
     apiVersion: kubeadm.k8s.io/v1beta2
     kind: ClusterStatus
@@ -183,7 +188,7 @@ kube-system   kube-scheduler-master1                     1/1     Running   0    
 
 $ kubectl get nodes
 NAME      STATUS   ROLES    AGE   VERSION
-master1   Ready    master   18m   v1.18.2
+master1   Ready    master   18m   v1.18.3
 ```
 
 
@@ -208,8 +213,8 @@ Make sure worker is ready.
 ```console
 $ kubectl get nodes
 NAME      STATUS   ROLES    AGE    VERSION
-master1   Ready    master   27m    v1.18.2
-worker1   Ready    <none>   3m1s   v1.18.2
+master1   Ready    master   27m    v1.18.3
+worker1   Ready    <none>   3m1s   v1.18.3
 ```
 
 
@@ -284,8 +289,8 @@ $ kubectl drain worker1 --delete-local-data --force --ignore-daemonsets
 
 $ kubectl get nodes
 NAME      STATUS                     ROLES    AGE   VERSION
-master1   Ready                      master   64m   v1.18.2
-worker1   Ready,SchedulingDisabled   <none>   40m   v1.18.2
+master1   Ready                      master   64m   v1.18.3
+worker1   Ready,SchedulingDisabled   <none>   40m   v1.18.3
 
 $ kubectl delete node worker1
 ```
