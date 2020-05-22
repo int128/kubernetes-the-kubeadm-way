@@ -16,7 +16,7 @@ GCP account is required. It is recommended to create a dedicated project.
 Open https://console.cloud.google.com/compute and create the following instances:
 
 - `master1`
-- `node1`
+- `worker1`
 
 with the following options:
 
@@ -32,7 +32,7 @@ gcloud beta compute instances create master1 --zone=asia-northeast1-b \
   --machine-type=e2-standard-2 \
   --subnet=default \
   --no-service-account --no-scopes \
-  --image=debian-10-buster-v20200413 --image-project=debian-cloud \
+  --image-project=debian-cloud --image-family=debian-10 \
   --boot-disk-size=10GB --boot-disk-type=pd-standard
 ```
 
@@ -94,9 +94,11 @@ curl -s https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo apt-key add
 cat <<EOF | sudo tee /etc/apt/sources.list.d/kubernetes.list
 deb https://apt.kubernetes.io/ kubernetes-xenial main
 EOF
-sudo apt-get update
-sudo apt-get install -y kubelet kubeadm kubectl
+sudo apt update
+sudo apt install -y kubelet kubeadm kubectl
 sudo apt-mark hold kubelet kubeadm kubectl
+kubectl version --client
+kubeadm version
 ```
 
 ```console
@@ -343,3 +345,211 @@ Clean up the control plane.
 sudo kubeadm reset
 sudo iptables -F && sudo iptables -t nat -F && sudo iptables -t mangle -F && sudo iptables -X
 ```
+
+
+## Highly available cluster
+
+### 1. Create instances
+
+Open https://console.cloud.google.com/compute and create the following instances:
+
+- `master1`
+- `master2`
+- `master3`
+- `worker1`
+
+with the following options:
+
+- Your nearest region and zone
+- e2-standard-2 (2 vCPUs, 8 GB memory)
+- Debian 10
+- Default network
+- Network tags: `api` (master) or `worker` (worker)
+
+As well as you can create instances on CLI.
+
+```sh
+gcloud beta compute instances create master1 --zone=asia-northeast1-b \
+  --machine-type=e2-standard-2 \
+  --subnet=default \
+  --tags=api \
+  --no-service-account --no-scopes \
+  --image-project=debian-cloud --image-family=debian-10 \
+  --boot-disk-size=10GB --boot-disk-type=pd-standard
+
+gcloud beta compute instances create master2 --zone=asia-northeast1-b \
+  --machine-type=e2-standard-2 \
+  --subnet=default \
+  --tags=api \
+  --no-service-account --no-scopes \
+  --image-project=debian-cloud --image-family=debian-10 \
+  --boot-disk-size=10GB --boot-disk-type=pd-standard
+
+gcloud beta compute instances create master3 --zone=asia-northeast1-b \
+  --machine-type=e2-standard-2 \
+  --subnet=default \
+  --tags=api \
+  --no-service-account --no-scopes \
+  --image-project=debian-cloud --image-family=debian-10 \
+  --boot-disk-size=10GB --boot-disk-type=pd-standard
+
+gcloud beta compute instances create worker1 --zone=asia-northeast1-b \
+  --machine-type=e2-standard-2 \
+  --subnet=default \
+  --tags=worker \
+  --no-service-account --no-scopes \
+  --image-project=debian-cloud --image-family=debian-10 \
+  --boot-disk-size=10GB --boot-disk-type=pd-standard
+```
+
+You can log in to the instances on the console.
+
+
+### 2. Create a load balancer
+
+Open https://console.cloud.google.com/net-services/loadbalancing and create a load balancer.
+
+- Frontend
+  - A ephemeral IP address
+  - Port 6443
+- Backend
+  - Add `master1` (DO NOT add `master2` and `master3` at this time)
+  - No health check
+
+Open https://console.cloud.google.com/networking/firewalls and create a rule.
+
+- Direction: Ingress
+- Target tags: `api`
+- Source IP ranges: `0.0.0.0/0`
+- Protocols and ports: tcp/6443
+
+
+### 3. Install the tools (master and worker)
+
+See the above section.
+
+
+### 4. Create a cluster (master1)
+
+Create a cluster on master1.
+
+```sh
+sudo kubeadm init --control-plane-endpoint "35.213.105.207:6443" --upload-certs
+```
+
+You can see the join commands.
+
+```
+You can now join any number of the control-plane node running the following command on each as root:
+
+  kubeadm join 35.213.105.207:6443 --token eivrbe.64tv35ww4apkdvdj \
+    --discovery-token-ca-cert-hash sha256:be4c5568226583d231cea663a7d6c68df8b509e7f06fc3427ec531462ee98ef0 \
+    --control-plane --certificate-key 6487107f16a7d466111e317010e8082d48b26c0e7e383b5fb14c23ec05ec2531
+
+Please note that the certificate-key gives access to cluster sensitive data, keep it secret!
+As a safeguard, uploaded-certs will be deleted in two hours; If necessary, you can use
+"kubeadm init phase upload-certs --upload-certs" to reload certs afterward.
+
+Then you can join any number of worker nodes by running the following on each as root:
+
+kubeadm join 35.213.105.207:6443 --token eivrbe.64tv35ww4apkdvdj \
+    --discovery-token-ca-cert-hash sha256:be4c5568226583d231cea663a7d6c68df8b509e7f06fc3427ec531462ee98ef0 
+```
+
+Deploy the CNI network plugin.
+
+```sh
+mkdir -p $HOME/.kube
+sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
+sudo chown $(id -u):$(id -g) $HOME/.kube/config
+
+kubectl apply -f https://docs.projectcalico.org/v3.14/manifests/calico.yaml
+
+kubectl -n kube-system get cm kubeadm-config -oyaml
+```
+
+You can see the cluster config.
+
+```yaml
+apiVersion: v1
+data:
+  ClusterConfiguration: |
+    apiServer:
+      extraArgs:
+        authorization-mode: Node,RBAC
+      timeoutForControlPlane: 4m0s
+    apiVersion: kubeadm.k8s.io/v1beta2
+    certificatesDir: /etc/kubernetes/pki
+    clusterName: kubernetes
+    controlPlaneEndpoint: 35.213.105.207:6443
+    controllerManager: {}
+    dns:
+      type: CoreDNS
+    etcd:
+      local:
+        dataDir: /var/lib/etcd
+    imageRepository: k8s.gcr.io
+    kind: ClusterConfiguration
+    kubernetesVersion: v1.18.3
+    networking:
+      dnsDomain: cluster.local
+      serviceSubnet: 10.96.0.0/12
+    scheduler: {}
+  ClusterStatus: |
+    apiEndpoints:
+      master1:
+        advertiseAddress: 10.146.0.8
+        bindPort: 6443
+    apiVersion: kubeadm.k8s.io/v1beta2
+    kind: ClusterStatus
+kind: ConfigMap
+```
+
+Make sure master1 is ready.
+
+```console
+$ kubectl get nodes
+NAME      STATUS   ROLES    AGE    VERSION
+master1   Ready    master   4m2s   v1.18.3
+```
+
+
+### 5. Join the cluster (master2/3)
+
+Run the join command on master2 and master3.
+
+```sh
+sudo kubeadm join 35.213.105.207:6443 --token eivrbe.64tv35ww4apkdvdj \
+    --discovery-token-ca-cert-hash sha256:be4c5568226583d231cea663a7d6c68df8b509e7f06fc3427ec531462ee98ef0 \
+    --control-plane --certificate-key 6487107f16a7d466111e317010e8082d48b26c0e7e383b5fb14c23ec05ec2531
+```
+
+Finally make sure all masters are ready.
+
+```sh
+mkdir -p $HOME/.kube
+sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
+sudo chown $(id -u):$(id -g) $HOME/.kube/config
+kubectl get nodes
+```
+
+Open https://console.cloud.google.com/net-services/loadbalancing and add `master2` and `master3` to the backend.
+
+
+### 6. Join the cluster (worker1)
+
+See the above section.
+
+Make sure all nodes are ready.
+
+```console
+% kubectl get nodes
+NAME      STATUS   ROLES    AGE     VERSION
+master1   Ready    master   62m     v1.18.3
+master2   Ready    master   12m     v1.18.3
+master3   Ready    master   14m     v1.18.3
+worker1   Ready    <none>   3m26s   v1.18.3
+```
+
+
+
